@@ -1,0 +1,105 @@
+#Section 2: Load and Preprocess Data
+
+import pandas as pd
+
+# Load the data
+data = pd.read_csv('../data/bitcoin_futures.csv', parse_dates=['Bar Close Date/Time'])
+
+# Set the 'Bar Close Date/Time' column as the index
+data.set_index('Bar Close Date/Time', inplace=True)
+
+# Display the first few rows of the data to verify
+data.head()
+
+# Check for missing values
+missing_values = data.isnull().sum()
+print("Missing values in each column:\n", missing_values)
+
+#Section 3: Create the Custom Trading Environment
+
+import gymnasium as gym
+from gym_anytrading.envs import StocksEnv
+
+# Define a custom trading environment for Bitcoin futures
+class BitcoinFuturesEnv(StocksEnv):
+    _process_data = lambda self: (data['CLOSE'], data['Volume'])
+
+# Initialize the environment
+env = BitcoinFuturesEnv(df=data, window_size=10, frame_bound=(10, len(data)))
+
+#Section 4: Integrate FinGPT
+
+from fingpt import FinGPT
+
+# Initialize FinGPT model
+fingpt_model = FinGPT()
+
+def get_fingpt_predictions(observation):
+    """Generate multiple responses using FinGPT based on the observation."""
+    responses = fingpt_model.predict(observation)
+    return responses
+
+#Section 5: Retrain the Model Based on Feedback
+
+from stable_baselines3 import DQN
+
+# Initialize the DQN agent
+model = DQN('MlpPolicy', env, verbose=1)
+
+def load_feedback():
+    """Load feedback from the feedback file."""
+    feedback = []
+    try:
+        with open("../data/feedback.txt", "r") as f:
+            feedback = f.readlines()
+    except FileNotFoundError:
+        print("Feedback file not found. Ensure feedback_interface.py is running and feedback is collected.")
+    return [f.strip() for f in feedback]
+
+def apply_feedback(model, feedback):
+    """Apply feedback to the model by adjusting learning based on user selection."""
+    for item in feedback:
+        if "best" in item:
+            model.learn(total_timesteps=1000)  # Reward learning
+        else:
+            model.learn(total_timesteps=500)   # Penalize learning
+
+# Load feedback
+feedback = load_feedback()
+
+# Apply feedback
+if feedback:
+    apply_feedback(model, feedback)
+
+# Train the agent
+model.learn(total_timesteps=10000)
+
+# Save the agent
+model.save("dqn_bitcoin_futures_agent")
+
+# Automated Retraining
+import time
+
+def automated_retraining():
+    """Automate the process of loading feedback, applying it, and retraining the model periodically."""
+    while True:
+        # Load and apply feedback
+        feedback = load_feedback()
+        if feedback:
+            apply_feedback(model, feedback)
+
+        # Train the agent
+        model.learn(total_timesteps=10000)
+
+        # Save the agent
+        model.save("dqn_bitcoin_futures_agent")
+
+        # Clear feedback
+        with open("../data/feedback.txt", "w") as f:
+            f.truncate(0)
+
+        # Wait for a specified period before retraining (e.g., 24 hours)
+        time.sleep(86400)  # 86400 seconds = 24 hours
+
+# Uncomment the following line to start automated retraining
+# automated_retraining()
